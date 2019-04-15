@@ -2,6 +2,7 @@ from flask import Flask, request
 from onvif import ONVIFCamera
 from time import sleep
 from wsdiscovery import WSDiscovery, QName, Scope
+
 import json
 
 app = Flask(__name__)
@@ -15,9 +16,10 @@ def index():
                 return("GET")
         else:
                 print(request.args.get("num"))
-                return("FUCK" + str(request.args.get("num")))            
-            
-mycam = ONVIFCamera('192.168.11.12', 80, 'admin', 'Supervisor', '/usr/local/wsdl')
+                return("FUCK" + str(request.args.get("num")))
+
+flag = False
+mycam = ONVIFCamera('192.168.15.43', 80, 'admin', 'Supervisor', '/usr/local/wsdl')
 media = mycam.create_media_service()
 ptz = mycam.create_ptz_service()
 media_profile = media.GetProfiles()[0];
@@ -25,18 +27,28 @@ token = media_profile._token
 CamList = []
 IPList = []
 
+@app.route('/GetSnapshot', methods=['POST'])
+def GetSnapshot():
+	global media
+	global token
+	GetUri = media.GetSnapshotUri({'ProfileToken':token})
+	return(GetUri.Uri)
 
-# В этой функции ищем камеры через WS-discovery,  записываем их в список камер CamList. 
-@app.route('/Discovery', methods=['GET'])
-def Discovery
+
+@app.route('/Discovery', methods=['POST'])
+def Discovery():
+	global CamList
+	global IPList
+	del CamList[:]
+	del IPList[:]
         wsd = WSDiscovery()
         wsd.start()
 
         ret = wsd.searchServices()
 
+	stroka = ''
+
         for service in ret:
-            global CamList
-            global IPList
             addrs = service.getXAddrs()[0]
             x = addrs.find('/')
             ip = addrs[x+1:]
@@ -50,78 +62,94 @@ def Discovery
                 ip = addrs[x+2:y]
                 x = addrs[y:].find('/')
                 port = addrs[y+1:y+x]
-            CamList.append(ONVIFCamera(ip,port,'admin','Supervisor','/usr/local/wsdl'))
-            IPList.append(ip)
             print(service.getEPR() + ":" + service.getXAddrs()[0])
             print('ip=' + ip + '     port=' + port)
-            
+            stroka = stroka + ip + "," + port + ','
         wsd.stop()
+	return(stroka)
 
-#Вызываем пресет через его номер (aka Preset Token)
 @app.route('/GotoPreset', methods=['POST'])
 def GotoPreset():
         Preset = ptz.create_type('GotoPreset')
         Preset.ProfileToken = token
-        ptz.GotoPreset({'ProfileToken':Preset.ProfileToken,'PresetToken':request.args.get("PresetNumber")})
-        print(Preset.PresetToken)
+        ptz.GotoPreset({'ProfileToken':token,'PresetToken':request.args.get("PresetNumber"),'Speed':1})
+        print(Preset.ProfileToken)
+	return(request.args.get("PresetNumber"))
 
-#Начало зума
-@app.route('/ZoomIn', methods=['POST'])
-def ZoomIn():
-        Cmove = ptz.create_type('ContinuousMove')
-        Cmove.ProfileToken = token
-        Cmove.Velocity.Zoom._x = 0.2
-        ptz.ContinuousMove(Cmove)
-        
-#Начало зума
-@app.route('/ZoomOut', methods=['POST'])
-def ZoomOut():
-        Cmove = ptz.create_type('ContinuousMove')
-        Cmove.ProfileToken = token
-        Cmove.Velocity.Zoom._x = -0.2
-        ptz.ContinuousMove(Cmove)
-
-        
-#Устанавливаем пресет в текущей позиции
 @app.route('/SetPreset', methods=['POST'])
 def SetPreset():
         Preset = ptz.create_type('SetPreset')
         Preset.ProfileToken = token
         Preset.PresetName = request.args.get("PresetName")
         Preset.PresetToken = request.args.get("PresetNumber")
-        print(Preset.PresetName)
+        ptz.SetPreset(Preset)
+	print(Preset.PresetName)
+	return(Preset.PresetToken)
 
-#Начало ContinuousMove, передаём скорость движения        
+@app.route('/ZoomIn', methods=['POST'])
+def ZoomIn():
+	Cmove = ptz.create_type('ContinuousMove')
+	Cmove.ProfileToken = token
+	Cmove.Velocity.Zoom._x = 0.2
+	ptz.ContinuousMove(Cmove)
+	
+@app.route('/ZoomOut', methods=['POST'])
+def ZoomOut():
+	Cmove = ptz.create_type('ContinuousMove')
+	Cmove.ProfileToken = token
+	Cmove.Velocity.Zoom._x = -0.2
+	ptz.ContinuousMove(Cmove)
+
 @app.route('/ContinuousMove', methods=['POST'])
 def CMove():
-        Cmove = ptz.create_type('ContinuousMove')
-        Cmove.ProfileToken = token
-        Cmove.Velocity.PanTilt._x = request.args.get("x")
-        Cmove.Velocity.PanTilt._y = request.args.get("y")
-        print(Cmove.Velocity)
+	global flag
+	if flag == True:
+		print("FUCK")
+        	Cmove = ptz.create_type('ContinuousMove')
+        	Cmove.ProfileToken = token
+        	Cmove.Velocity.PanTilt._x = request.args.get("x")
+		Cmove.Velocity.PanTilt._y = request.args.get("y")
+        	ptz.ContinuousMove(Cmove)
+		print(Cmove.Velocity)
+		return("1")
+@app.route('/SetFlag', methods=['POST'])
+def SetFlag():
+	global flag
+	flag = True
+	if flag == True:
+		print("FUCK")
+	else:
+		print("SUCK")
+	return("1")
 
-#Остановка ContinuousMove
+@app.route('/UnsetFlag', methods=['POST'])
+def UnsetFlag():
+	global flag
+	flag = False
+	ptz.Stop({'ProfileToken':token})
+	print(flag)
+	return("2")
+
 @app.route('/MoveStop', methods=['POST'])
 def MoveStop():
+	print("STOP")
         ptz.Stop({'ProfileToken': token})
 
-#В этой функции выбираем рабочую камеру, передавая ей IP и port камеры
 @app.route('/SelectCamera', methods=['POST'])
 def SelectCamera():
-        global mycam
-        mycam  = ONVIFCamera(request.args.get("IP"), request.args.get("Port"),'admin','Supervisor', '/usr/local/wsdl')
-        global media
-        media = mycam.create_media_service()
-        global ptz
-        ptz  = mycam.create_ptz_service()
-        global media_profile
-        media_profile = media.GetProfiles()[0];
-        global token
-        token = media_profile._token
+	global mycam
+	mycam  = ONVIFCamera(request.args.get("IP"), request.args.get("Port"),'admin','Supervisor', '/usr/local/wsdl')
+	global media
+	media = mycam.create_media_service()
+	global ptz
+	ptz  = mycam.create_ptz_service()
+	global media_profile
+	media_profile = media.GetProfiles()[0];
+	global token
+	token = media_profile._token
         print("IP :" + request.args.get("IP"))
         print("Port :" + str(request.args.get("Port")))
-        return(request.args.get("Port"))
+	return(request.args.get("Port"))
 
-#запускаем http сервер на порте 80
 if __name__ == '__main__':
-        app.run(host='localhost', port=80)
+        app.run(host='188.246.233.224', port=8080)
